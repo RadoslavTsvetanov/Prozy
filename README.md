@@ -6,33 +6,26 @@
 - for funnies
 - I needed to write tests for my redirecting logic and writing them in a real lang would have made it easier
 
+# How to use
+
+## Not s Standard Service
+i dont like working with services i like working with code since it has lsp autocomplete and a compiler while a config has none of that so the way you
+to use the service is to pull the code from the repo and edit the `main.scala` file where you will add your middlewares, cors config etc ...
+
 # Features 
 
 ## Middlewares 
-there is a folder called middlewaresin which every file is executed as middleware, for now only the tool lang is supported buy in the future there will be support for different langs which will be run inside a sandbox env
+middlewares are added using the withMiddleware method
+
 
 ## Handlers
-in the handlers folder again you make a handwr for redirecting logic
-which should follow this function signature
-```
-fn handler(req: Req) -> string | null
-```
-where the return is the redirect url and if it is null we invoke the nest handleramd like that until one returns a string
+for the handler you use the with handler command (note only one handler can be defined and if you add another you will overwrite the original -> todo make it so that if you call withResolver twice in the builder you panic)
 
-also handles are executed in order e.g. First fails we ge the second etc....
+
 ## easy to set up
 
 ## easy to set up ssl certs
-
-## Built in  and customizable logging
-- in the config object (either json file loaded from the config.json or as env) you can specify a file to which to save the logs for each request 
-- you can define your custom logging handler which must be called logging.scala and located in the root dir, if you dont want to make one you can sepcify the entry `logging` in your `config.json` to either `all` or `none` and to use a custom one it should be set to `custom`. Also logging handlers are executed in seperate process so dont be afraid that it will hurt latency
-NOTE: when loading config it is first checked for he existence of an env and then for a file
-
-## Exposed Api
-Dont like json and managing configs, well just like any web server lib you can just pull the dependency in your scala project and start building on top of it. To see more
-about this look at `Extending the basic web server`
-
+- you have to use the `withSsl()` method 
 
 # Extnding the base web server
 
