@@ -5,11 +5,11 @@ import java.io.FileNotFoundException
 import scala.io.Source
 
 
-enum ReadFileResults {
+enum ReadFileErrors {
   case NOT_FOUND, UNKNOWN_ERR
 }
 
-def readFileAndReturnTheWholeFileContent(path: String): Either[String, ReadFileResults]= {
+def readFileAndReturnTheWholeFileContent(path: String): Either[String, ReadFileErrors]= {
   try {
     val fileContent = new StringBuilder("")
     val source = Source.fromFile(path)
@@ -23,8 +23,8 @@ def readFileAndReturnTheWholeFileContent(path: String): Either[String, ReadFileR
     }
   } catch {
     case _: FileNotFoundException =>
-      Right(ReadFileResults.NOT_FOUND)
+      Right(ReadFileErrors.NOT_FOUND)
     case ex: Exception =>
-      Right(ReadFileResults.UNKNOWN_ERR)
+      Right(ReadFileErrors.UNKNOWN_ERR)
   }
 }

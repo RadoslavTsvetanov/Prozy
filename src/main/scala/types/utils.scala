@@ -1,3 +1,4 @@
 package types
-import scala.None
-type Nullish[T] = Either[T, None]
+type Nullish[T] = Either[T, Unit]
+
+class Url 
