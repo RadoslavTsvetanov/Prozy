@@ -1,11 +1,10 @@
 package webserver
 
-import cats.effect.{Async, IO}
+import cats.effect.{Async, ExitCode, IO}
 import com.comcast.ip4s
 import org.http4s.client.Client
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
-import org.http4s.server.middleware.CORS
 import org.http4s.{HttpRoutes, Request, Response, Uri}
 import types.LoggingTypes.{CUSTOM, DEFAULT, NONE}
 import types.{CORSConfig, LoggingTypes}
@@ -18,7 +17,6 @@ trait IMiddleware {
 
 class MiddlewareLoadedFromFile extends IMiddleware {
   def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = {
-    // Logic for applying middleware
     routes
   }
 }
@@ -42,124 +40,77 @@ enum Method(val method: String) {
   case Delete extends Method("DELETE")
 }
 
-class ReverseProxy private () {
+class ReverseProxy private (
+                             val resolver: Option[Request[IO] => String],
+                             val middlewares: List[IMiddleware],
+                             val corsConfig: Option[CORSConfig],
+                             val logging: LoggingTypes
+                           ) {
 
-  private var resolver: Option[Request[IO] => String] = None
-  private var middlewares: List[IMiddleware] = List()
-  private var corsConfig: Option[CORSConfig] = None
-  private var logging: LoggingTypes = NONE
+  def listen(
+    port: Int = 8080,
+    host: String = "127.0.0.1",
+    resolver: Uri => Uri,
+    client: Client[IO]
+): IO[ExitCode] = {
 
-  def withLogging(loggingHandler: (req: Request[IO]) => Unit): ReverseProxy = {
-    class LoggingMiddleware extends IMiddleware {
-      override def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = {
-        HttpRoutes { request =>
-          loggingHandler(request)
-          routes(request)
-        }
-      }
-    }
-    this.addMiddleware(LoggingMiddleware())
-    this.logging = LoggingTypes.CUSTOM
-    this
+  val proxyRoutes = HttpRoutes.of[IO] { case req =>
+    client.run(req.withUri(resolver(req.uri))).use(IO.pure)
   }
 
-  def withCors(cors: CORSConfig) = {
-    this.corsConfig = Some(cors)
-  }
+  val httpApp = Router("/" -> proxyRoutes).orNotFound
 
-  def withResolver(resolverFunction: Request[IO] => String): ReverseProxy = {
-    resolver = Some(resolverFunction)
-    this
-  }
-
-  def addMiddleware(middleware: IMiddleware): ReverseProxy = {
-    middlewares = middlewares :+ middleware
-    this
-  }
-
-  def addCors(config: CORSConfig): ReverseProxy = {
-    corsConfig = Some(config)
-    this
-  }
-
-  def listen(port: Int = 8080, host: String = "0.0.0.0")(implicit F: Async[IO]): IO[Unit] = {
-    resolver match {
-      case Some(resolverFn) =>
-        val baseRoutes = HttpRoutes.of[IO] {
-          case req =>
-            val targetUrl = resolverFn(req)
-            val proxyRequest = Request[IO](
-              method = req.method,
-              uri = Uri.unsafeFromString(targetUrl),
-              headers = req.headers
-            )
-            Client[IO].expect[Response[IO]](proxyRequest)
-        }
-
-        this.logging match {
-          case NONE => Unit
-          case DEFAULT => {
-            class DefaultLogging extends IMiddleware {
-              override def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = {
-                HttpRoutes { request =>
-                  println("req received: " + request.toString())
-                  routes(request)
-                }
-              }
-            }
-            this.addMiddleware(DefaultLogging())
-          }
-          case CUSTOM => Unit
-        }
-        val wrappedRoutes = middlewares.foldLeft(baseRoutes)((routes, mw) => mw.apply(routes))
-
-        val finalRoutes = corsConfig match {
-          case Some(config) => CORS(wrappedRoutes, config.toHttp4sCorsConfig())
-          case None         => wrappedRoutes
-        }
-
-        val httpApp = Router("/" -> finalRoutes).orNotFound
-
-        EmberServerBuilder
-          .default[IO]
-          .withHost(Host.fromString(host) match {
-            case Some(value) => value
-            case None => throw new Error("host " + host + " is not in a valid format")
-          })
-          .withPort(Port.fromInt(port) match {
-            case Some(v) => v
-            case None => throw new Error("port " + port + " is not valid port format")
-          })
-          .withHttpApp(httpApp)
-          .build
-          .useForever
-
-      case None =>
-        IO.raiseError(new IllegalStateException("Resolver function must be defined before calling listen."))
-    }
-  }
+  EmberServerBuilder
+    .default[IO]
+    .withHost(Host.fromString(host).getOrElse(sys.error(s"Invalid host: $host")))
+    .withPort(Port.fromInt(port).getOrElse(sys.error(s"Invalid port: $port")))
+    .withHttpApp(httpApp)
+    .build
+    .useForever
+    .as(ExitCode.Success)
+}
 }
 
-object ReverseProxy {
-  def apply(): ReverseProxy = new ReverseProxy()
+object ReverseProxy { // we are using it to have a builder
+  def apply(): Builder = new Builder()
 
-  def withLogging(loggingHandler: (req: Request[IO]) => Unit): ReverseProxy = {
-    apply().withLogging(loggingHandler)
-  }
+  class Builder {
+    private var resolver: Option[Request[IO] => String] = None
+    private var middlewares: List[IMiddleware] = List()
+    private var corsConfig: Option[CORSConfig] = None
+    private var logging: LoggingTypes = NONE
 
-  def withCors(cors: CORSConfig): ReverseProxy = {
-    apply().withCors(cors)
-  }
+    def withLogging(loggingHandler: Request[IO] => Unit): Builder = {
+      class LoggingMiddleware extends IMiddleware {
+        override def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = {
+          HttpRoutes { request =>
+            loggingHandler(request)
+            routes(request)
+          }
+        }
+      }
+      middlewares = middlewares :+ new LoggingMiddleware()
+      logging = CUSTOM
+      this
+    }
 
-  def withResolver(resolverFunction: Request[IO] => String): ReverseProxy = {
-    apply().withResolver(resolverFunction)
-  }
+    def withResolver(resolverFunction: Request[IO] => String): Builder = {
+      resolver = Some(resolverFunction)
+      this
+    }
 
-  def addMiddleware(middleware: IMiddleware): ReverseProxy = {
-    apply().addMiddleware(middleware)
-  }
+    def addMiddleware(middleware: IMiddleware): Builder = {
+      middlewares = middlewares :+ middleware
+      this
+    }
 
-  def addCors(config: CORSConfig): ReverseProxy = {
-    apply().addCors(config)
+    def addCors(config: CORSConfig): Builder = {
+      corsConfig = Some(config)
+      this
+    }
+
+    def build(): ReverseProxy = {
+      new ReverseProxy(resolver, middlewares, corsConfig, logging)
+    }
   }
 }

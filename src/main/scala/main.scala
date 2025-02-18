@@ -1,44 +1,17 @@
-import utils.ReadFileErrors.{NOT_FOUND, UNKNOWN_ERR}
-import io.circe.*
-import io.circe.parser.*
-import types.Config
-import utils.{ReadFileErrors, readFileAndReturnTheWholeFileContent}
+import cats.effect.{IO, IOApp}
+import org.http4s.ember.client.EmberClientBuilder
+import webserver.ReverseProxy
 
+object Main extends IOApp.Simple {
 
-import java.lang
-
-def getEnv(): Option[String] = Option(System.getenv("ENV"))
-
-def parseConfig(jsonStr: String): Either[Throwable, Config] = {
-  try {
-    val parseResult: Either[ParsingFailure, Json] = parse(jsonStr)
-    parseResult match {
-      case Left(parsingError) =>
-        throw new IllegalArgumentException(s"Invalid JSON object: ${parsingError.message}")
-      case Right(json) => {
-//        Right(json(Config))
-        throw new InternalError("fix me")
-      }
+  def run: IO[Unit] = {
+    EmberClientBuilder.default[IO].build.use { client =>
+      ReverseProxy()
+        .withResolver(req => req.uri.toString())
+        .withLogging(req => println(s"Proxying request: ${req.method} ${req.uri}"))
+        .build()
+        .listen(port = 8080, host = "127.0.0.1", v => v, client)
+        .as(())
     }
-
-  } catch {
-    case e: Exception => Left(e)
-  }
-}
-
-def loadConfig(): Either[Throwable, Config] = {
-  getEnv() match {
-    case None =>
-      println("No ENV found, defaulting to config.json")
-      readFileAndReturnTheWholeFileContent("config.json") match {
-        case Left(value) => parseConfig(value)
-        case Right(value) => {
-          println("no config.json found either")
-          throw new scala.Error()
-        }
-      }
-
-    case Some(envValue) =>
-      parseConfig(envValue)
   }
 }

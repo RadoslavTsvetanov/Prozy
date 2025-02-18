@@ -41,21 +41,16 @@ class IpRateLimitingMiddleware(maxRequestsPerMinute: Int) extends IMiddleware {
     HttpRoutes { request =>
       val ip = request.remoteAddr.map {
         case address: IpAddress => address.toString()
-        case str: String => str
       }.getOrElse("Unknown IP")
 
-      // Add IP to the visitors store
       Visitors.add(ip)
 
-      // Check if rate limit is exceeded
       if (Visitors.getRequestCount(ip) > maxRequestsPerMinute) {
-        // Early return wrapped in OptionT
         OptionT.pure[IO](
           Response[IO](Status.TooManyRequests)
             .withEntity("Rate limit exceeded")
         )
       } else {
-        // Continue to next middleware
         routes(request)
       }
     }
@@ -70,24 +65,25 @@ class ExampleMiddlewareWhichPrintsEveryRequest extends IMiddleware{
     }
   }
 }
-@main def main(): Unit = {
-  val proxy = ReverseProxy()
-    .withLogging(request => println("Logging: " + request.uri))
-    .withResolver(request => "http://localhost:3000")
-
-
-  proxy.withResolver((req: Request[IO]) => {
-    val services = Map(
-      "auth" -> "http://localhost:300",
-      "users" -> "http://localhost:301"
-    )
-
-    services.get(req.uri.path.toString()) match {
-      case None => "localhost:300"
-      case Some(service) => service
-    }
-  })
-
-  // Add IP rate limiting middleware with a max of 100 requests per minute
-  proxy.addMiddleware(new IpRateLimitingMiddleware(maxRequestsPerMinute = 100)).addMiddleware(new ExampleMiddlewareWhichPrintsEveryRequest)
-}
+//@main def main(): Unit = {
+//  val proxy = ReverseProxy
+//    .builder()
+//    .withLogging(request => println("Logging: " + request.uri))
+//    .withResolver(request => "http://localhost:3000")
+//
+//
+//  proxy.withResolver((req: Request[IO]) => {
+//    val services = Map(
+//      "auth" -> "http://localhost:300",
+//      "users" -> "http://localhost:301"
+//    )
+//
+//    services.get(req.uri.path.toString()) match {
+//      case None => "localhost:300"
+//      case Some(service) => service
+//    }
+//  })
+//
+//  // Add IP rate limiting middleware with a max of 100 requests per minute
+//  proxy.addMiddleware(new IpRateLimitingMiddleware(maxRequestsPerMinute = 100)).addMiddleware(new ExampleMiddlewareWhichPrintsEveryRequest)
+//}
