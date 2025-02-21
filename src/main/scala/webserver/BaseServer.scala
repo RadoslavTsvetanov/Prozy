@@ -1,35 +1,29 @@
 package webserver
 
-import cats.effect.{Async, ExitCode, IO}
+import cats.effect.{IO, ExitCode}
 import com.comcast.ip4s
 import org.http4s.client.Client
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 import org.http4s.{HttpRoutes, Request, Response, Uri}
-import types.LoggingTypes.{CUSTOM, DEFAULT, NONE}
+import types.LoggingTypes.{CUSTOM, NONE}
 import types.{CORSConfig, LoggingTypes}
 import com.comcast.ip4s.{Host, Port}
-
 
 trait IMiddleware {
   def apply(routes: HttpRoutes[IO]): HttpRoutes[IO]
 }
 
 class MiddlewareLoadedFromFile extends IMiddleware {
-  def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = {
-    routes
-  }
+  def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = routes
 }
 
 case class Origin(value: String)
 
 object Origin {
   def apply(origin: String): Option[Origin] = {
-    if (origin.indexOf("http") < 0 && origin.indexOf("https") < 0) {
-      None
-    } else {
-      Some(new Origin(origin))
-    }
+    if (origin.startsWith("http://") || origin.startsWith("https://")) Some(new Origin(origin))
+    else None
   }
 }
 
@@ -41,41 +35,46 @@ enum Method(val method: String) {
 }
 
 class ReverseProxy private (
-                             val resolver: Option[Request[IO] => String],
+                             val resolver: Option[Request[IO] => Uri],
                              val middlewares: List[IMiddleware],
                              val corsConfig: Option[CORSConfig],
                              val logging: LoggingTypes
                            ) {
-
   def listen(
-    port: Int = 8080,
-    host: String = "127.0.0.1",
-    resolver: Uri => Uri,
-    client: Client[IO]
-): IO[ExitCode] = {
+              port: Int = 8080,
+              host: String = "127.0.0.1",
+              resolver: Uri => Uri,
+              client: Client[IO]
+            ): IO[ExitCode] = {
+    val proxyRoutes = HttpRoutes.of[IO] { case req =>
+      IO(println(s"Handling request: ${req.method} ${req.uri}")) *>
+        this.resolver
+          .map(r => client.run(req.withUri(r(req))).use(IO.pure))
+          .getOrElse(IO.pure(Response.notFound[IO]))
+    }
 
-  val proxyRoutes = HttpRoutes.of[IO] { case req =>
-    client.run(req.withUri(resolver(req.uri))).use(IO.pure)
+    val routesWithMiddleware = middlewares.foldLeft(proxyRoutes) { (routes, middleware) =>
+      middleware(routes)
+    }
+
+    val httpApp = Router("/" -> routesWithMiddleware).orNotFound
+
+    EmberServerBuilder
+      .default[IO]
+      .withHost(Host.fromString(host).getOrElse(sys.error(s"Invalid host: $host")))
+      .withPort(Port.fromInt(port).getOrElse(sys.error(s"Invalid port: $port")))
+      .withHttpApp(httpApp)
+      .build
+      .useForever
+      .as(ExitCode.Success)
   }
-
-  val httpApp = Router("/" -> proxyRoutes).orNotFound
-
-  EmberServerBuilder
-    .default[IO]
-    .withHost(Host.fromString(host).getOrElse(sys.error(s"Invalid host: $host")))
-    .withPort(Port.fromInt(port).getOrElse(sys.error(s"Invalid port: $port")))
-    .withHttpApp(httpApp)
-    .build
-    .useForever
-    .as(ExitCode.Success)
-}
 }
 
-object ReverseProxy { // we are using it to have a builder
+object ReverseProxy {
   def apply(): Builder = new Builder()
 
   class Builder {
-    private var resolver: Option[Request[IO] => String] = None
+    private var resolver: Option[Request[IO] => Uri] = None
     private var middlewares: List[IMiddleware] = List()
     private var corsConfig: Option[CORSConfig] = None
     private var logging: LoggingTypes = NONE
@@ -94,7 +93,7 @@ object ReverseProxy { // we are using it to have a builder
       this
     }
 
-    def withResolver(resolverFunction: Request[IO] => String): Builder = {
+    def withResolver(resolverFunction: Request[IO] => Uri): Builder = {
       resolver = Some(resolverFunction)
       this
     }
