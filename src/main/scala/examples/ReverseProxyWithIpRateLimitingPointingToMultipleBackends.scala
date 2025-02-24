@@ -65,25 +65,25 @@ class ExampleMiddlewareWhichPrintsEveryRequest extends IMiddleware{
     }
   }
 }
-//@main def main(): Unit = {
-//  val proxy = ReverseProxy
-//    .builder()
-//    .withLogging(request => println("Logging: " + request.uri))
-//    .withResolver(request => "http://localhost:3000")
-//
-//
-//  proxy.withResolver((req: Request[IO]) => {
-//    val services = Map(
-//      "auth" -> "http://localhost:300",
-//      "users" -> "http://localhost:301"
-//    )
-//
-//    services.get(req.uri.path.toString()) match {
-//      case None => "localhost:300"
-//      case Some(service) => service
-//    }
-//  })
-//
-//  // Add IP rate limiting middleware with a max of 100 requests per minute
-//  proxy.addMiddleware(new IpRateLimitingMiddleware(maxRequestsPerMinute = 100)).addMiddleware(new ExampleMiddlewareWhichPrintsEveryRequest)
-//}
+@main def main(): Unit = {
+  val proxy = ReverseProxy
+    ()
+    .withLogging(request => println("Logging: " + request.uri))
+
+  proxy.withResolver((req: Request[IO]) => {
+    val services = Map(
+      "auth" -> "http://localhost:300",
+      "users" -> "http://localhost:301"
+    )
+
+    val url = services.get(req.uri.path.toString()) match {
+      case None => "localhost:3000"
+      case Some(service) => service
+    }
+
+    Uri.unsafeFromString(url).withPath(req.uri.path)
+  })
+
+  // Add IP rate limiting middleware with a max of 100 requests per minute
+  proxy.addMiddleware(new IpRateLimitingMiddleware(maxRequestsPerMinute = 100)).addMiddleware(new ExampleMiddlewareWhichPrintsEveryRequest)
+}
