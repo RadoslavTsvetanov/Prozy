@@ -4,7 +4,7 @@
 - I needed a https reverse proxy with more complex filtering functionality and nginx and traefik weren't good enough
 - to learn a new language I wanted to learn for a long time
 - for funnies
-- I needed to write tests for my redirecting logic and writing them in a real lang would have made it easier
+- I needed to write tests for my redirecting logic and writing them in a real lang would have made it easier (this is achieved easily since a handler is just a function soo it can be passed into unit tests)
 
 # How to use
 
