@@ -34,11 +34,17 @@ object Main extends IOApp.Simple:
     EmberClientBuilder.default[IO].build.use { client =>
       ReverseProxy()
         .withResolver { req =>
-          val baseUrl = resolveService(req) 
+          val baseUrl = resolveService(req)
+          println(baseUrl)
           Uri.unsafeFromString(baseUrl).withPath(req.uri.path)
         }
+        .withSSL(
+          keystorePath = "/home/x-ae-x/example/keystore.p12",
+          keystorePassword = "password",
+          keyManagerPassword = "password"
+        )
         .withLogging(req => IO.println(s"Proxying request: ${req.method} ${req.uri}"))
         .build()
-        .listen(port = 8080, host = "127.0.0.1", identity, client)
+        .listen(port = 8080, host = "127.0.0.1", client)
         .as(())
     }

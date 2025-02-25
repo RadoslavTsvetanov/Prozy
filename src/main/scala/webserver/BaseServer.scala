@@ -1,6 +1,6 @@
 package webserver
 
-import cats.effect.{IO, ExitCode}
+import cats.effect.{IO, ExitCode, Resource}
 import com.comcast.ip4s
 import org.http4s.client.Client
 import org.http4s.ember.server.EmberServerBuilder
@@ -9,6 +9,10 @@ import org.http4s.{HttpRoutes, Request, Response, Uri}
 import types.LoggingTypes.{CUSTOM, NONE}
 import types.{CORSConfig, LoggingTypes}
 import com.comcast.ip4s.{Host, Port}
+import fs2.io.net.tls.TLSContext
+import java.security.{KeyStore, SecureRandom}
+import javax.net.ssl.{KeyManagerFactory, SSLContext, TrustManagerFactory}
+import java.io.FileInputStream
 
 trait IMiddleware {
   def apply(routes: HttpRoutes[IO]): HttpRoutes[IO]
@@ -34,16 +38,53 @@ enum Method(val method: String) {
   case Delete extends Method("DELETE")
 }
 
+case class SSLConfig(
+                      keystorePath: String,
+                      keystorePassword: String,
+                      keyManagerPassword: String,
+                      keystoreType: String = "PKCS12"
+                    )
+
 class ReverseProxy private (
                              val resolver: Option[Request[IO] => Uri],
                              val middlewares: List[IMiddleware],
                              val corsConfig: Option[CORSConfig],
-                             val logging: LoggingTypes
+                             val logging: LoggingTypes,
+                             val sslConfig: Option[SSLConfig]
                            ) {
+
+  private def createSSLContext(sslConfig: SSLConfig): SSLContext = {
+    val keystore = KeyStore.getInstance(sslConfig.keystoreType)
+    val keystoreFile = new FileInputStream(sslConfig.keystorePath)
+    try {
+      keystore.load(keystoreFile, sslConfig.keystorePassword.toCharArray)
+    } finally {
+      keystoreFile.close()
+    }
+
+    val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
+    keyManagerFactory.init(keystore, sslConfig.keyManagerPassword.toCharArray)
+
+    val trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
+    trustManagerFactory.init(keystore)
+
+    val sslContext = SSLContext.getInstance("TLS")
+    sslContext.init(
+      keyManagerFactory.getKeyManagers,
+      trustManagerFactory.getTrustManagers,
+      new SecureRandom()
+    )
+
+    sslContext
+  }
+
+  private def createTLSContext(sslConfig: SSLConfig) = {
+    TLSContext.Builder.forAsync[IO].fromSSLContext(createSSLContext(sslConfig))
+  }
+
   def listen(
               port: Int = 8080,
               host: String = "127.0.0.1",
-              resolver: Uri => Uri,
               client: Client[IO]
             ): IO[ExitCode] = {
     val proxyRoutes = HttpRoutes.of[IO] { case req =>
@@ -59,11 +100,20 @@ class ReverseProxy private (
 
     val httpApp = Router("/" -> routesWithMiddleware).orNotFound
 
-    EmberServerBuilder
+    val baseBuilder = EmberServerBuilder
       .default[IO]
       .withHost(Host.fromString(host).getOrElse(sys.error(s"Invalid host: $host")))
       .withPort(Port.fromInt(port).getOrElse(sys.error(s"Invalid port: $port")))
       .withHttpApp(httpApp)
+
+    val serverBuilder = sslConfig match {
+      case Some(config) =>
+        baseBuilder.withTLS(createTLSContext(config))
+      case None =>
+        baseBuilder
+    }
+
+    serverBuilder
       .build
       .useForever
       .as(ExitCode.Success)
@@ -78,6 +128,7 @@ object ReverseProxy {
     private var middlewares: List[IMiddleware] = List()
     private var corsConfig: Option[CORSConfig] = None
     private var logging: LoggingTypes = NONE
+    private var sslConfig: Option[SSLConfig] = None
 
     def withLogging(loggingHandler: Request[IO] => Unit): Builder = {
       class LoggingMiddleware extends IMiddleware {
@@ -108,8 +159,23 @@ object ReverseProxy {
       this
     }
 
+    def withSSL(
+                 keystorePath: String,
+                 keystorePassword: String,
+                 keyManagerPassword: String,
+                 keystoreType: String = "PKCS12"
+               ): Builder = {
+      sslConfig = Some(SSLConfig(
+        keystorePath,
+        keystorePassword,
+        keyManagerPassword,
+        keystoreType
+      ))
+      this
+    }
+
     def build(): ReverseProxy = {
-      new ReverseProxy(resolver, middlewares, corsConfig, logging)
+      new ReverseProxy(resolver, middlewares, corsConfig, logging, sslConfig)
     }
   }
 }

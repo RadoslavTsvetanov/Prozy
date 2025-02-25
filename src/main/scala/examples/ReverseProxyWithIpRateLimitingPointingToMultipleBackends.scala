@@ -66,8 +66,7 @@ class ExampleMiddlewareWhichPrintsEveryRequest extends IMiddleware{
   }
 }
 @main def main(): Unit = {
-  val proxy = ReverseProxy
-    ()
+  val proxy = ReverseProxy()
     .withLogging(request => println("Logging: " + request.uri))
 
   proxy.withResolver((req: Request[IO]) => {
